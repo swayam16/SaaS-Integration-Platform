@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>Case Message</label>
+    <pluralLabel>Case Messages</pluralLabel>
+    <description>A message on a Case, written in Salesforce or synced from the Case's Slack thread by SyncBridge.</description>
+    <nameField>
+        <label>Case Message Number</label>
+        <type>AutoNumber</type>
+        <displayFormat>CM-{0000000}</displayFormat>
+    </nameField>
+    <deploymentStatus>Deployed</deploymentStatus>
+    <sharingModel>ControlledByParent</sharingModel>
+    <enableActivities>false</enableActivities>
+    <enableHistory>false</enableHistory>
+    <enableReports>true</enableReports>
+    <enableSearch>true</enableSearch>
+</CustomObject>

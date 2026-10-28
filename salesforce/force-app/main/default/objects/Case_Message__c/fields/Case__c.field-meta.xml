@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Case__c</fullName>
+    <label>Case</label>
+    <type>MasterDetail</type>
+    <referenceTo>Case</referenceTo>
+    <relationshipName>Case_Messages</relationshipName>
+    <relationshipLabel>Case Messages</relationshipLabel>
+    <relationshipOrder>0</relationshipOrder>
+    <reparentableMasterDetail>false</reparentableMasterDetail>
+    <writeRequiresMasterRead>false</writeRequiresMasterRead>
+</CustomField>

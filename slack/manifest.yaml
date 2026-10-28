@@ -1,0 +1,36 @@
+# Slack app manifest. Create the app at https://api.slack.com/apps -> "From an app manifest",
+# after replacing sync.example.com with your SyncBridge hostname.
+display_information:
+  name: SyncBridge
+  description: Salesforce Cases in Slack, kept in sync both ways.
+  background_color: "#1b2430"
+  long_description: >-
+    Posts one message per Salesforce Case to your support channel and keeps it up to date.
+    Replies in a Case's thread are saved to the Case in Salesforce, and the Escalate, Close
+    and Reopen buttons update the Case directly. SyncBridge only reads threads under messages
+    it posted itself.
+features:
+  bot_user:
+    display_name: SyncBridge
+    always_online: true
+oauth_config:
+  redirect_urls:
+    - https://sync.example.com/oauth/slack/callback
+  scopes:
+    bot:
+      - chat:write          # post and update Case messages and thread replies
+      - channels:history    # read replies in Case threads (public channels)
+      - groups:history      # read replies in Case threads (private channels)
+      - users:read          # show who replied, as the Case message author
+settings:
+  event_subscriptions:
+    request_url: https://sync.example.com/webhooks/slack/events
+    bot_events:
+      - message.channels
+      - message.groups
+  interactivity:
+    is_enabled: true
+    request_url: https://sync.example.com/webhooks/slack/interactivity
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

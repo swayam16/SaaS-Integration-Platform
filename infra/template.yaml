@@ -1,0 +1,445 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SyncBridge - bidirectional Salesforce/Slack sync with an Okta-secured admin console.
+  One deployment per customer, in the customer's (or the vendor's dedicated) AWS account.
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: Hostname for the console and all endpoints, e.g. sync.example.com
+  CertificateArn:
+    Type: String
+    Description: ACM certificate for DomainName, in us-east-1 (required by CloudFront)
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: Optional address for operational alarms (dead letters, worker errors)
+  WorkerConcurrency:
+    Type: Number
+    Default: 10
+    MinValue: 2
+    MaxValue: 100
+    Description: Upper bound on parallel workers, to stay inside Salesforce and Slack rate limits
+
+Conditions:
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]
+    CodeUri: ../build/lambda
+    MemorySize: 512
+    Timeout: 15
+    Tracing: Active
+    LoggingConfig:
+      LogFormat: JSON
+      ApplicationLogLevel: INFO
+    Environment:
+      Variables:
+        ENVIRONMENT: prod
+        PUBLIC_BASE_URL: !Sub "https://${DomainName}"
+        STORE_BACKEND: dynamodb
+        TABLE_NAME: !Ref Table
+        QUEUE_URL: !Ref EventsQueue
+        KMS_KEY_ID: !GetAtt Key.Arn
+        SECRETS_ARN: !Ref AppSecrets
+        REQUIRE_SCIM_PROVISIONING: "true"
+
+Resources:
+  # --- encryption & secrets -------------------------------------------------------------------
+  Key:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: SyncBridge data key (OAuth tokens, table, queue, secrets)
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AccountAdmin
+            Effect: Allow
+            Principal: { AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root" }
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: AllowSqsAndDynamoDB
+            Effect: Allow
+            Principal: { Service: [sqs.amazonaws.com, dynamodb.amazonaws.com] }
+            Action: [kms:GenerateDataKey, kms:Decrypt]
+            Resource: "*"
+            Condition:
+              StringEquals: { "aws:SourceAccount": !Ref AWS::AccountId }
+
+  KeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/${AWS::StackName}"
+      TargetKeyId: !Ref Key
+
+  AppSecrets:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: >-
+        All Salesforce, Slack and Okta settings for this deployment. Fill in during setup
+        (docs/setup-guide.md), then run `make reload`.
+      KmsKeyId: !Ref Key
+      SecretString: >-
+        {"SALESFORCE_LOGIN_URL":"https://login.salesforce.com","SALESFORCE_CLIENT_ID":"",
+        "SALESFORCE_CLIENT_SECRET":"","SALESFORCE_WEBHOOK_SECRET":"","SLACK_CLIENT_ID":"",
+        "SLACK_CLIENT_SECRET":"","SLACK_SIGNING_SECRET":"","SAML_IDP_ENTITY_ID":"",
+        "SAML_IDP_SSO_URL":"","SAML_IDP_CERT":"","SCIM_TOKEN_SHA256":""}
+
+  # --- state ----------------------------------------------------------------------------------
+  Table:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+      DeletionProtectionEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+        SSEType: KMS
+        KMSMasterKeyId: !Ref Key
+
+  EventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 120 # 6x the worker timeout, as AWS recommends for Lambda consumers
+      MessageRetentionPeriod: 1209600
+      KmsMasterKeyId: !Ref Key
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt EventsDLQ.Arn
+        maxReceiveCount: 10
+
+  EventsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      MessageRetentionPeriod: 1209600
+      KmsMasterKeyId: !Ref Key
+
+  # --- API ------------------------------------------------------------------------------------
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 200
+        ThrottlingRateLimit: 100
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogs.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","method":"$context.httpMethod","path":"$context.path","status":"$context.status","latency":"$context.responseLatency","integrationError":"$context.integrationErrorMessage"}'
+
+  ApiAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 90
+
+  WebhooksFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Verifies Salesforce/Slack webhook signatures and enqueues events
+      Handler: syncbridge.handlers.webhooks
+      Timeout: 5
+      Events:
+        Webhooks:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Method: POST, Path: "/webhooks/{proxy+}" }
+      Policies:
+        - SQSSendMessagePolicy: { QueueName: !GetAtt EventsQueue.QueueName }
+        - DynamoDBCrudPolicy: { TableName: !Ref Table }
+        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref AppSecrets }
+        - Statement:
+            - Effect: Allow
+              Action: [kms:Decrypt, kms:GenerateDataKey]
+              Resource: !GetAtt Key.Arn
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Admin console backend, SAML login and OAuth connections
+      Handler: syncbridge.handlers.api
+      Events:
+        Api:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Method: ANY, Path: "/api/{proxy+}" }
+        Saml:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Method: ANY, Path: "/saml/{proxy+}" }
+        OAuth:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Method: GET, Path: "/oauth/{proxy+}" }
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Table }
+        - SQSSendMessagePolicy: { QueueName: !GetAtt EventsQueue.QueueName }
+        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref AppSecrets }
+        - Statement:
+            - Effect: Allow
+              Action: [kms:Decrypt, kms:GenerateDataKey]
+              Resource: !GetAtt Key.Arn
+
+  ScimFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: SCIM 2.0 provisioning endpoint for Okta
+      Handler: syncbridge.handlers.scim
+      ReservedConcurrentExecutions: 5
+      Events:
+        Scim:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Method: ANY, Path: "/scim/v2/{proxy+}" }
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Table }
+        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref AppSecrets }
+        - Statement:
+            - Effect: Allow
+              Action: [kms:Decrypt]
+              Resource: !GetAtt Key.Arn
+
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Applies queued sync events to Salesforce and Slack
+      Handler: syncbridge.handlers.worker
+      Timeout: 20
+      Events:
+        Queue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EventsQueue.Arn
+            BatchSize: 10
+            MaximumBatchingWindowInSeconds: 1
+            FunctionResponseTypes: [ReportBatchItemFailures]
+            ScalingConfig: { MaximumConcurrency: !Ref WorkerConcurrency }
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Table }
+        - SQSPollerPolicy: { QueueName: !GetAtt EventsQueue.QueueName }
+        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref AppSecrets }
+        - Statement:
+            - Effect: Allow
+              Action: [kms:Decrypt, kms:GenerateDataKey]
+              Resource: !GetAtt Key.Arn
+
+  ReconcileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Finds Salesforce changes whose webhook never arrived
+      Handler: syncbridge.handlers.reconcile
+      Timeout: 120
+      ReservedConcurrentExecutions: 1
+      Events:
+        Every5Minutes:
+          Type: ScheduleV2
+          Properties: { ScheduleExpression: rate(5 minutes) }
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Table }
+        - SQSSendMessagePolicy: { QueueName: !GetAtt EventsQueue.QueueName }
+        - AWSSecretsManagerGetSecretValuePolicy: { SecretArn: !Ref AppSecrets }
+        - Statement:
+            - Effect: Allow
+              Action: [kms:Decrypt, kms:GenerateDataKey]
+              Resource: !GetAtt Key.Arn
+
+  # --- console hosting: one origin for the console and the API ----------------------------------
+  ConsoleBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+
+  ConsoleBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ConsoleBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudfront.amazonaws.com }
+            Action: s3:GetObject
+            Resource: !Sub "${ConsoleBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+  ConsoleOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-console"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SecurityHeaders:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub "${AWS::StackName}-security"
+        SecurityHeadersConfig:
+          StrictTransportSecurity: { AccessControlMaxAgeSec: 63072000, IncludeSubdomains: true, Override: true }
+          ContentTypeOptions: { Override: true }
+          FrameOptions: { FrameOption: DENY, Override: true }
+          ReferrerPolicy: { ReferrerPolicy: no-referrer, Override: true }
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self' https://*.okta.com https://*.oktapreview.com https://login.salesforce.com https://slack.com"
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Aliases: [!Ref DomainName]
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CertificateArn
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        HttpVersion: http2and3
+        DefaultRootObject: index.html
+        Origins:
+          - Id: console
+            DomainName: !GetAtt ConsoleBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt ConsoleOAC.Id
+            S3OriginConfig: { OriginAccessIdentity: "" }
+          - Id: api
+            DomainName: !Sub "${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+            CustomOriginConfig: { OriginProtocolPolicy: https-only, OriginSSLProtocols: [TLSv1.2] }
+        DefaultCacheBehavior:
+          TargetOriginId: console
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # CachingOptimized
+          ResponseHeadersPolicyId: !Ref SecurityHeaders
+          Compress: true
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: !Ref SecurityHeaders
+          - PathPattern: /saml/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: !Ref SecurityHeaders
+          - PathPattern: /oauth/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: !Ref SecurityHeaders
+          - PathPattern: /scim/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: !Ref SecurityHeaders
+          - PathPattern: /webhooks/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: https-only
+            AllowedMethods: [GET, HEAD, OPTIONS, PUT, PATCH, POST, DELETE]
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # CachingDisabled
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # AllViewerExceptHostHeader
+            ResponseHeadersPolicyId: !Ref SecurityHeaders
+
+  # --- alarms -------------------------------------------------------------------------------------
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlarmEmail
+    Properties:
+      KmsMasterKeyId: !Ref Key
+      Subscription: [{ Protocol: email, Endpoint: !Ref AlarmEmail }]
+
+  DeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmDescription: Messages reached the SQS dead-letter queue (worker crashed repeatedly)
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions: [{ Name: QueueName, Value: !GetAtt EventsDLQ.QueueName }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  QueueAgeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmDescription: Sync is falling behind (oldest message older than 10 minutes)
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions: [{ Name: QueueName, Value: !GetAtt EventsQueue.QueueName }]
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 600
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  WorkerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmDescription: Worker Lambda errors
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref WorkerFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+Outputs:
+  ConsoleUrl:
+    Value: !Sub "https://${DomainName}/"
+  CloudFrontDomain:
+    Description: Point DomainName at this with a CNAME (or Route 53 alias)
+    Value: !GetAtt Distribution.DomainName
+  DistributionId:
+    Value: !Ref Distribution
+  ConsoleBucketName:
+    Value: !Ref ConsoleBucket
+  SecretsArn:
+    Description: Salesforce, Slack and Okta settings go here (see docs/setup-guide.md)
+    Value: !Ref AppSecrets
+  SalesforceWebhookUrl:
+    Value: !Sub "https://${DomainName}/webhooks/salesforce"
+  SlackEventsUrl:
+    Value: !Sub "https://${DomainName}/webhooks/slack/events"
+  SlackInteractivityUrl:
+    Value: !Sub "https://${DomainName}/webhooks/slack/interactivity"
+  SamlAcsUrl:
+    Value: !Sub "https://${DomainName}/saml/acs"
+  SamlEntityId:
+    Value: !Sub "https://${DomainName}/saml/metadata"
+  ScimBaseUrl:
+    Value: !Sub "https://${DomainName}/scim/v2"

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Source__c</fullName>
+    <label>Source</label>
+    <description>Where the message was written. Messages from Slack are never sent back to Slack.</description>
+    <type>Picklist</type>
+    <valueSet>
+        <restricted>true</restricted>
+        <valueSetDefinition>
+            <sorted>false</sorted>
+            <value><fullName>Salesforce</fullName><default>true</default><label>Salesforce</label></value>
+            <value><fullName>Slack</fullName><default>false</default><label>Slack</label></value>
+        </valueSetDefinition>
+    </valueSet>
+</CustomField>

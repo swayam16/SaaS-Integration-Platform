@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <label>SyncBridge Integration</label>
+    <description>Least privilege for the integration user SyncBridge signs in as: read and edit Cases, create and edit Case Messages. No delete, no other objects.</description>
+    <hasActivationRequired>false</hasActivationRequired>
+    <userPermissions><enabled>true</enabled><name>ApiEnabled</name></userPermissions>
+    <objectPermissions>
+        <object>Case</object>
+        <allowRead>true</allowRead><allowEdit>true</allowEdit>
+        <allowCreate>false</allowCreate><allowDelete>false</allowDelete>
+        <viewAllRecords>true</viewAllRecords><modifyAllRecords>false</modifyAllRecords>
+    </objectPermissions>
+    <objectPermissions>
+        <object>Case_Message__c</object>
+        <allowRead>true</allowRead><allowEdit>true</allowEdit>
+        <allowCreate>true</allowCreate><allowDelete>false</allowDelete>
+        <viewAllRecords>true</viewAllRecords><modifyAllRecords>false</modifyAllRecords>
+    </objectPermissions>
+    <fieldPermissions><field>Case.Last_Slack_Actor__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Case_Message__c.Body__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Case_Message__c.Author__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Case_Message__c.Source__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Case_Message__c.Slack_Message_Key__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Case_Message__c.Slack_Channel__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+    <fieldPermissions><field>Case_Message__c.Slack_TS__c</field><readable>true</readable><editable>true</editable></fieldPermissions>
+</PermissionSet>

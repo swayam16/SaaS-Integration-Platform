@@ -1,0 +1,254 @@
+{
+  "main": {
+    "config": {
+      "cases": 10000,
+      "duration": 1800.0,
+      "update_ratio": 0.6,
+      "agent_message_ratio": 0.35,
+      "slack_reply_ratio": 0.35,
+      "edit_ratio": 0.2,
+      "click_ratio": 0.25,
+      "seed": 7,
+      "naive": false,
+      "faults": true,
+      "crash_rate": 0.01,
+      "api_error_rate": 0.02,
+      "api_ambiguous_rate": 0.02,
+      "rate_limit_rate": 0.01,
+      "webhook_duplicate_rate": 0.1,
+      "webhook_drop_rate": 0.01,
+      "max_delivery_delay": 20.0,
+      "slack_outage": [
+        600.0,
+        780.0
+      ],
+      "salesforce_outage": [
+        1200.0,
+        1290.0
+      ],
+      "batch": 40,
+      "tick": 0.25
+    },
+    "records": {
+      "salesforce_cases": 10000,
+      "case_messages_from_salesforce": 3593,
+      "case_messages_from_slack": 3514,
+      "slack_edits": 668,
+      "slack_button_clicks": 2467,
+      "total_records_synced": 17107
+    },
+    "traffic": {
+      "salesforce_notifications": 30984,
+      "webhook_deliveries": 40874,
+      "queue_messages_sent": 41076,
+      "queue_receives": 56224,
+      "redeliveries": 15150,
+      "salesforce_api_calls": 7008,
+      "slack_api_calls": 31556
+    },
+    "faults": {
+      "salesforce_api": {
+        "lock_error": 33,
+        "error_before": 64,
+        "connect_error": 40,
+        "timeout_after": 73,
+        "error_after": 72,
+        "rate_limit": 23,
+        "outage": 12
+      },
+      "slack_api": {
+        "rate_limit": 322,
+        "timeout_after": 253,
+        "error_before": 285,
+        "error_after": 263,
+        "connect_error": 169,
+        "outage": 16
+      },
+      "salesforce_webhooks": {
+        "duplicated": 2958,
+        "dropped": 321
+      },
+      "slack_events": {
+        "duplicated": 604
+      },
+      "worker_crashes": {
+        "before_slack_post": 155,
+        "before_complete": 368,
+        "after_slack_post": 133,
+        "after_slack_update": 105,
+        "before_sf_write": 94,
+        "after_sf_write": 69
+      },
+      "salesforce_token_expiries": 2
+    },
+    "handling": {
+      "engine_outcomes": {
+        "created": 16858,
+        "duplicate": 3583,
+        "skipped_echo": 4241,
+        "skipped_stale": 2157,
+        "unchanged": 991,
+        "updated": 13223
+      },
+      "inline_retries": 1202,
+      "rate_limited_responses": 345,
+      "ambiguous_failures": 975,
+      "recovered_via_slack_metadata": 453,
+      "circuit_breaker_opens": {
+        "salesforce": 5,
+        "slack": 9
+      },
+      "calls_skipped_by_open_circuit": 13162,
+      "deferred_to_queue": 14247,
+      "dead_lettered_during_run": 23,
+      "reconciler": {
+        "scanned": 13593,
+        "enqueued": 179
+      },
+      "replayed_from_dead_letter": 23,
+      "dead_letters_after_replay": 0
+    },
+    "audit": {
+      "duplicate_slack_case_messages": 0,
+      "duplicate_slack_thread_replies": 0,
+      "duplicate_salesforce_case_messages": 0,
+      "duplicate_writes_total": 0,
+      "cases_missing_in_slack": 0,
+      "salesforce_messages_missing_in_slack": 0,
+      "slack_replies_missing_in_salesforce": 0,
+      "slack_cases_not_matching_salesforce": 0,
+      "salesforce_messages_not_matching_slack": 0
+    },
+    "timing": {
+      "virtual_seconds_live": 3432.3,
+      "virtual_seconds_total": 3499.8,
+      "wall_seconds": 75.6,
+      "inline_backoff_seconds": 605.0
+    }
+  },
+  "naive": {
+    "config": {
+      "cases": 10000,
+      "duration": 1800.0,
+      "update_ratio": 0.6,
+      "agent_message_ratio": 0.35,
+      "slack_reply_ratio": 0.35,
+      "edit_ratio": 0.2,
+      "click_ratio": 0.25,
+      "seed": 7,
+      "naive": true,
+      "faults": true,
+      "crash_rate": 0.01,
+      "api_error_rate": 0.02,
+      "api_ambiguous_rate": 0.02,
+      "rate_limit_rate": 0.01,
+      "webhook_duplicate_rate": 0.1,
+      "webhook_drop_rate": 0.01,
+      "max_delivery_delay": 20.0,
+      "slack_outage": [
+        600.0,
+        780.0
+      ],
+      "salesforce_outage": [
+        1200.0,
+        1290.0
+      ],
+      "batch": 40,
+      "tick": 0.25
+    },
+    "records": {
+      "salesforce_cases": 10000,
+      "case_messages_from_salesforce": 3573,
+      "case_messages_from_slack": 3501,
+      "slack_edits": 717,
+      "slack_button_clicks": 2458,
+      "total_records_synced": 17074
+    },
+    "traffic": {
+      "salesforce_notifications": 31244,
+      "webhook_deliveries": 41192,
+      "queue_messages_sent": 41355,
+      "queue_receives": 55794,
+      "redeliveries": 14443,
+      "salesforce_api_calls": 7164,
+      "slack_api_calls": 26489
+    },
+    "faults": {
+      "salesforce_api": {
+        "lock_error": 34,
+        "error_before": 65,
+        "connect_error": 40,
+        "timeout_after": 77,
+        "error_after": 72,
+        "rate_limit": 24,
+        "outage": 12
+      },
+      "slack_api": {
+        "rate_limit": 268,
+        "timeout_after": 270,
+        "error_before": 237,
+        "error_after": 270,
+        "connect_error": 142,
+        "outage": 16
+      },
+      "salesforce_webhooks": {
+        "duplicated": 2985,
+        "dropped": 323
+      },
+      "slack_events": {
+        "duplicated": 610
+      },
+      "worker_crashes": {
+        "before_slack_post": 250,
+        "before_complete": 411,
+        "after_slack_post": 128,
+        "before_sf_write": 57,
+        "after_sf_write": 45
+      },
+      "salesforce_token_expiries": 2
+    },
+    "handling": {
+      "engine_outcomes": {
+        "created": 16910,
+        "ignored_unknown_message": 98,
+        "skipped_echo": 4672,
+        "skipped_stale": 5099,
+        "updated": 14560
+      },
+      "inline_retries": 1437,
+      "rate_limited_responses": 292,
+      "ambiguous_failures": 1019,
+      "recovered_via_slack_metadata": 0,
+      "circuit_breaker_opens": {
+        "salesforce": 5,
+        "slack": 9
+      },
+      "calls_skipped_by_open_circuit": 12875,
+      "deferred_to_queue": 13564,
+      "dead_lettered_during_run": 16,
+      "reconciler": {
+        "scanned": 13573,
+        "enqueued": 147
+      },
+      "replayed_from_dead_letter": 16,
+      "dead_letters_after_replay": 0
+    },
+    "audit": {
+      "duplicate_slack_case_messages": 326,
+      "duplicate_slack_thread_replies": 114,
+      "duplicate_salesforce_case_messages": 126,
+      "duplicate_writes_total": 566,
+      "cases_missing_in_slack": 0,
+      "salesforce_messages_missing_in_slack": 0,
+      "slack_replies_missing_in_salesforce": 0,
+      "slack_cases_not_matching_salesforce": 152,
+      "salesforce_messages_not_matching_slack": 24
+    },
+    "timing": {
+      "virtual_seconds_live": 3193.5,
+      "virtual_seconds_total": 3254.7,
+      "wall_seconds": 15.8,
+      "inline_backoff_seconds": 541.9
+    }
+  }
+}
