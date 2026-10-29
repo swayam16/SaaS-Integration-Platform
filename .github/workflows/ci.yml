@@ -74,4 +74,7 @@ jobs:
           python-version: "3.12"
       - run: make lambda PY=python
       - name: Check package size (Lambda limit is 250 MB unzipped)
-        run: du -sm build/lambda | awk '{ if ($1 > 200) { print "package too large: " $1 " MB"; exit 1 } else print $1 " MB" }'
+        run: |
+          size=$(du -sm build/lambda | cut -f1)
+          echo "package size: ${size} MB"
+          test "$size" -le 200
